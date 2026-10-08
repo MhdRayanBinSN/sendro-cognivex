@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cognivex — Product Research</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark">C</span><span>cognivex<span class="brand-light"> research</span></span></a>
+      <div class="side-label">WORKSPACE</div>
+      <nav>
+        <a class="nav-link" data-route="/" href="/"><span class="nav-icon">◫</span>Overview</a>
+        <a class="nav-link" data-route="/workspace/runs" href="/workspace/runs"><span class="nav-icon">◌</span>Runs<span class="nav-count" id="runCount">0</span></a>
+        <a class="nav-link" data-route="/workspace/reports" href="/workspace/reports"><span class="nav-icon">▤</span>Reports<span class="nav-count" id="reportCount">0</span></a>
+        <a class="nav-link" data-route="/workspace/categories" href="/workspace/categories"><span class="nav-icon">⌘</span>Categories</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="status-card"><span class="status-dot"></span><div><b>Research engine</b><small>API connected</small></div></div>
+        <a class="settings-link" data-route="/workspace/settings" href="/workspace/settings">⚙ &nbsp; Settings</a>
+        <div class="sidebar-foot">Autonomous product intelligence<br>v0.1.0 · public evidence only</div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="breadcrumbs">Workspace <span>/</span> <b>Overview</b></div>
+        <div class="top-actions"><span class="today" id="today"></span><button class="icon-button" id="refreshButton" aria-label="Refresh">↻</button><div class="avatar">CX</div></div>
+      </header>
+      <div id="workspacePage" class="workspace-page" aria-live="polite"></div>
+
+      <section class="page-heading" id="overview">
+        <div><div class="eyebrow">RESEARCH WORKSPACE</div><h1>Product intelligence, <em>on autopilot.</em></h1><p>Discover, investigate, and compare emerging software products with evidence you can verify.</p></div>
+        <button class="primary-button" id="startRun"><span>＋</span> Start a research run</button>
+      </section>
+
+      <section class="metric-grid" aria-label="Workspace summary">
+        <article class="metric-card"><div class="metric-top"><span>Research runs</span><span class="metric-icon blue">↗</span></div><strong id="runMetric">—</strong><small>All time</small></article>
+        <article class="metric-card"><div class="metric-top"><span>Reports generated</span><span class="metric-icon violet">▤</span></div><strong id="reportMetric">—</strong><small>Evidence-backed comparisons</small></article>
+        <article class="metric-card"><div class="metric-top"><span>Active categories</span><span class="metric-icon green">⌘</span></div><strong id="categoryMetric">—</strong><small>Configured for discovery</small></article>
+        <article class="metric-card"><div class="metric-top"><span>Tokens used</span><span class="metric-icon amber">⌁</span></div><strong id="tokenMetric">—</strong><small id="tokenBreakdown">Input + output · all runs</small></article>
+      </section>
+
+      <section class="content-grid">
+        <div class="panel runs-panel">
+          <div class="panel-heading"><div><h2>Recent research runs</h2><p>Track stage progress and review decisions.</p></div><button class="text-button" id="viewAllRuns">View all <span>→</span></button></div>
+          <div class="table-wrap"><table><thead><tr><th>RUN</th><th>CATEGORY</th><th>STATUS</th><th>COST</th><th>STARTED</th><th></th></tr></thead><tbody id="runsBody"><tr><td colspan="6" class="empty-row">Loading run history…</td></tr></tbody></table></div>
+        </div>
+
+        <aside class="panel launch-panel">
+          <div class="panel-heading"><div><h2>Start a comparison</h2><p>Choose a category to discover products.</p></div></div>
+          <label class="field-label" for="categorySelect">RESEARCH CATEGORY</label>
+          <select id="categorySelect" class="input"><option>Loading categories…</option></select>
+          <div class="run-note"><span class="sparkle">✳</span><div><b>What happens next?</b><p>We find recently launched products, research public pages, verify key claims, and create a comparison report.</p></div></div>
+          <button class="primary-button full-width" id="launchRun">Start research <span>→</span></button>
+          <div class="run-footnote">Runs may take several minutes. You can leave this page open while it works.</div>
+        </aside>
+      </section>
+
+      <footer class="main-footer"><span>© 2026 Cognivex Research</span><span>Grounded in public information · Built for clear decisions</span></footer>
+    </main>
+  </div>
+
+  <dialog id="keyDialog" class="dialog"><form method="dialog"><div class="dialog-head"><div><span class="eyebrow">ADMIN ACCESS</span><h2>Optional API protection</h2></div><button class="icon-button close-dialog" aria-label="Close">×</button></div><p>For local use, leave this blank. If <code>ADMIN_API_KEY</code> is set in the server's <code>.env</code>, enter the same value here.</p><label class="field-label" for="adminKey">ADMIN API KEY (OPTIONAL)</label><input class="input" id="adminKey" type="password" autocomplete="off" placeholder="Only needed if enabled in .env"><div class="dialog-actions"><button class="secondary-button close-dialog">Cancel</button><button class="primary-button" id="saveKey" value="default">Save key</button></div></form></dialog>
+  <dialog id="runDialog" class="dialog wide-dialog"><div class="dialog-head"><div><span class="eyebrow">RUN DETAILS</span><h2 id="runTitle">Research run</h2></div><button class="icon-button close-dialog" aria-label="Close">×</button></div><div id="runDetails"></div></dialog>
+  <dialog id="reportDialog" class="report-dialog"><div class="report-dialog-bar"><div><b id="reportTitle">Research report</b><span id="reportDate"></span></div><div class="dialog-actions"><a class="secondary-button" id="markdownLink" target="_blank">View Markdown</a><button class="icon-button close-dialog" aria-label="Close">×</button></div></div><iframe id="reportFrame" title="Product comparison report"></iframe></dialog>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

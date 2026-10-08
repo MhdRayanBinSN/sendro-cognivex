@@ -1,0 +1,1 @@
+"""Autonomous product research service."""
