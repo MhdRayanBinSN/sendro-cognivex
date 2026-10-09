@@ -39,6 +39,10 @@ async def test_pipeline_completes_with_injected_stage_adapters(monkeypatch):
     async def fake_screenshot(product, run_id, session, fetcher):
         return {**product, "screenshot_count": 3, "screenshot_errors": [], "screenshot_checks": []}
 
+    async def fake_site_metrics(candidates):
+        return [{"product": item.name, "homepage_url": str(item.url), "github": None,
+                 "pagespeed": None, "errors": []} for item in candidates]
+
     async def fake_compare(name_a, facts_a, name_b, facts_b, **kwargs):
         return ComparisonData(
             reasoning="Comparable evidence was available",
@@ -53,6 +57,7 @@ async def test_pipeline_completes_with_injected_stage_adapters(monkeypatch):
     monkeypatch.setattr(service, "select_pair", fake_select)
     monkeypatch.setattr(service, "_research_product", fake_research)
     monkeypatch.setattr(service, "_capture_product_screenshots", fake_screenshot)
+    monkeypatch.setattr(service, "collect_site_metrics", fake_site_metrics)
     monkeypatch.setattr(service, "compare_products", fake_compare)
 
     with Session(test_engine) as session:
@@ -68,7 +73,7 @@ async def test_pipeline_completes_with_injected_stage_adapters(monkeypatch):
         assert session.exec(select(Comparison).where(Comparison.run_id == run_id)).first()
         comparison = session.exec(select(Comparison).where(Comparison.run_id == run_id)).first()
         assert comparison and "Evidence-backed benchmarks" in comparison.html
-        assert len(session.exec(select(StageLog).where(StageLog.run_id == run_id)).all()) == 6
+        assert len(session.exec(select(StageLog).where(StageLog.run_id == run_id)).all()) == 7
         assert len(session.exec(select(Product)).all()) == 2
 
 

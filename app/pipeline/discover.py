@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.llm import ask
 from app.pipeline.schemas import Candidate
-from app.services.search import HackerNewsProvider, SearchProvider, SearchResult
+from app.services.search import (GitHubSearchProvider, HackerNewsProvider, ProductHuntAlgoliaProvider,
+                                 SearchProvider, SearchResult)
 from app.services.urlsafe import UnsafeURLError, canonicalize_url, registered_domain
 
 
@@ -32,6 +33,34 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
     settings = get_settings()
     today = datetime.now(timezone.utc).date()
     start_date = today - timedelta(days=days)
+    product_hunt_results: list[SearchResult] = []
+    product_hunt_error = None
+    if settings.product_hunt_search_enabled and not force_established_alternatives:
+        try:
+            search_key = settings.product_hunt_algolia_search_key.get_secret_value()
+            product_hunt_results = await ProductHuntAlgoliaProvider(
+                settings.product_hunt_algolia_app_id, search_key,
+                settings.product_hunt_algolia_index,
+            ).search(category, days=365)
+        except Exception as exc:
+            # Product Hunt is an additional launch feed, not a dependency for
+            # the existing Tavily/Hacker News discovery path.
+            product_hunt_error = f"{type(exc).__name__}: {exc}"
+    product_hunt_candidates = _product_hunt_candidates(
+        category, product_hunt_results, start_date, today, excluded_domains or set())
+    if len(product_hunt_candidates) >= 2:
+        diagnostics = {
+            "windows": [{"days": days, "search_results": len(product_hunt_results),
+                         "extractor_candidates": len(product_hunt_candidates),
+                         "grounded_candidates": len(product_hunt_candidates),
+                         "source": "product_hunt_algolia", "llm_extraction_skipped": True}],
+            "search_result_count": len(product_hunt_results),
+            "candidate_count": len(product_hunt_candidates),
+            "comparison_scope": "recent_launches", "fallback_note": None,
+            "source_errors": ([product_hunt_error] if product_hunt_error else []),
+        }
+        return product_hunt_candidates, [f"Product Hunt: {category}"], diagnostics
+
     if force_established_alternatives:
         queries = []
     elif isinstance(provider, HackerNewsProvider):
@@ -58,6 +87,7 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
     windows_to_try = [] if force_established_alternatives else list(
         dict.fromkeys((days, min(max(days * 2, 180), 365), 365)))
     for window_days in windows_to_try:
+        window_start = today - timedelta(days=window_days)
         batches: list[list[SearchResult]] = []
         if isinstance(provider, HackerNewsProvider):
             try:
@@ -76,6 +106,10 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
                 batches.append([])
 
         # Interleave query angles so a single popular query cannot fill the model context.
+        product_hunt_window = [item for item in product_hunt_results
+                               if _result_date(item) and window_start <= _result_date(item) <= today]
+        if product_hunt_window:
+            batches.append(product_hunt_window)
         for result_index in range(max((len(batch) for batch in batches), default=0)):
             for batch in batches:
                 if result_index < len(batch):
@@ -94,7 +128,6 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
             extracted = candidates
             result_by_url = {_safe_candidate_url(result.url): result for result in prompt_results}
             allowed_sources = set(result_by_url)
-            window_start = today - timedelta(days=window_days)
             for candidate in candidates:
                 # The model may infer the product homepage from a cited result. The
                 # source citation must be an exact search result; the validation stage
@@ -125,6 +158,17 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
                     rejected["launch_evidence"] += 1
                     continue
                 homepage_result = result_by_url.get(product_url)
+                if homepage_result is None:
+                    ph_homepage = next((item for item in supporting_results
+                                        if item.source == "product_hunt_algolia"
+                                        and _safe_candidate_url(item.metadata.get("homepage", ""))
+                                        == product_url), None)
+                    if ph_homepage:
+                        homepage_result = SearchResult(
+                            title=ph_homepage.metadata.get("name", candidate.name),
+                            url=product_url, snippet=ph_homepage.snippet,
+                            source="product_hunt_algolia_homepage",
+                        )
                 # Search frequently returns a company's blog/docs page for a
                 # product launch. That page proves the launch, but it is not the
                 # product homepage needed for validation and screenshots.
@@ -184,7 +228,17 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
                 alternative_batches.append(await provider.search(query, days=365))
             except Exception:
                 alternative_batches.append([])
-        alternative_results = _unique_results(raw_results + [item for batch in alternative_batches for item in batch])
+        github_results: list[SearchResult] = []
+        if settings.github_search_enabled:
+            token = settings.github_token.get_secret_value() if settings.github_token else None
+            try:
+                github_results = await GitHubSearchProvider(token).search(category)
+            except Exception:
+                # GitHub is an additional discovery source; its quota/network
+                # failure must not discard Tavily/Hacker News results.
+                github_results = []
+        alternative_results = _unique_results(
+            raw_results + [item for batch in alternative_batches for item in batch] + github_results)
         alt_candidates = await _extract_alternatives(category, alternative_results,
             excluded_domains=excluded_domains or set(), run_id=run_id, session=session)
         grounded_alternatives = []
@@ -227,8 +281,53 @@ async def discover(category: str, provider: SearchProvider, *, previous_queries:
 
     diagnostics = {"windows": windows, "search_result_count": len(raw_results),
                    "candidate_count": len(accepted), "comparison_scope": comparison_scope,
-                   "fallback_note": fallback_note}
+                   "fallback_note": fallback_note,
+                   "source_errors": ([product_hunt_error] if product_hunt_error else [])}
     return accepted, queries, diagnostics
+
+
+def _product_hunt_candidates(category: str, results: list[SearchResult], start_date, end_date,
+                             excluded_domains: set[str]) -> list[Candidate]:
+    """Create candidates from structured Product Hunt posts without an LLM call."""
+    candidates: dict[str, Candidate] = {}
+    excluded = {registered_domain(item) for item in excluded_domains}
+    for result in results:
+        published = _result_date(result)
+        homepage = _safe_candidate_url(result.metadata.get("homepage") or "")
+        name = result.metadata.get("name") or result.title
+        if (not published or not start_date <= published <= end_date or not homepage
+                or _is_content_page(homepage) or _domain(homepage) in excluded):
+            continue
+        # Keep the post date distinct from a verified first-release date. A
+        # Product Hunt submission is a launch signal, not proof the product
+        # was unavailable before its post appeared.
+        tagline = result.metadata.get("tagline") or ""
+        description = result.metadata.get("description") or tagline
+        candidate = Candidate(
+            name=name,
+            url=homepage,
+            description=(description or f"{name}, listed on Product Hunt in {category}")[:500],
+            launch_signal="Product Hunt post date; first public release not independently verified",
+            launch_evidence=f"Product Hunt post created on {published.isoformat()}",
+            confidence_new=0.7,
+            is_recent_launch=True,
+            is_product_site=True,
+            source_urls=[result.url],
+        )
+        candidates.setdefault(homepage, candidate)
+    return list(candidates.values())
+
+
+def _result_date(result: SearchResult):
+    if not result.published_date:
+        return None
+    try:
+        return datetime.fromisoformat(str(result.published_date).replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(str(result.published_date)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
 
 
 async def _extract_candidates(category: str, results: list[SearchResult], days: int, *,
@@ -261,8 +360,9 @@ async def _extract_candidates(category: str, results: list[SearchResult], days: 
 async def _extract_alternatives(category: str, results: list[SearchResult], *,
                                 excluded_domains: set[str], run_id: int | None, session) -> list[Candidate]:
     """Extract current category products when launch-only discovery is sparse."""
-    compact_results = [{"title": item.title[:150], "url": item.url, "snippet": item.snippet[:240],
-                        "source": item.source} for item in results[-24:]]
+    compact_results = [{"title": item.title[:150], "url": item.url, "snippet": item.snippet[:700],
+                        "source": item.source, "metadata": item.metadata}
+                       for item in results[-24:]]
     prompt = (
         f"Identify up to ten distinct, currently available software products in {category!r}. "
         "This is an alternatives comparison, not a new-launch list: do not imply that any product launched recently. "
@@ -320,6 +420,11 @@ def _is_content_page(url: str) -> bool:
                           "review", "reviews", "directory", "compare", "comparison"}
     content_paths = {"blog", "news", "press", "docs", "documentation", "help", "support",
                      "articles", "article", "posts", "updates", "stories", "learn"}
+    if (parts.hostname or "").lower() in {"github.com", "www.github.com"}:
+        path_parts = [part for part in parts.path.split("/") if part]
+        if len(path_parts) >= 2 and path_parts[0].casefold() not in {
+                "topics", "search", "orgs", "features", "collections", "marketplace"}:
+            return True
     registered = _domain(url)
     directory_domain = any(signal in registered.split(".", 1)[0]
                            for signal in ("review", "directory", "alternatives", "compare"))
@@ -337,6 +442,9 @@ def _official_name_match(name: str, title: str) -> bool:
 
 def _supports_recent_launch(quote: str, result: SearchResult, start_date, end_date) -> bool:
     """Require a dated release/update statement, not just recent category coverage."""
+    if result.source == "product_hunt_algolia":
+        published = _result_date(result)
+        return bool(published and start_date <= published <= end_date)
     signal_text = " ".join(quote.casefold().split())
     launch_signal = re.search(
         r"\b(launch(?:ed|es|ing)?|release(?:d|s)?|introduc(?:ed|es|ing)|announc(?:ed|es)|"

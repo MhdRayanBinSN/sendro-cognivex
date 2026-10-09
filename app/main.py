@@ -175,6 +175,9 @@ def get_run(run_id: int, session: Session = Depends(get_session)):
                     if settings.groq_api_key and settings.groq_api_key.get_secret_value() else None,
                 "groq_json_fallback_model": settings.groq_json_fallback_model
                     if settings.groq_api_key and settings.groq_api_key.get_secret_value() else None,
+                "github_search_enabled": settings.github_search_enabled,
+                "pagespeed_audit_enabled": settings.pagespeed_audit_enabled,
+                "product_hunt_search_enabled": settings.product_hunt_search_enabled,
             },
             "report_id": report.id if report else None}
 

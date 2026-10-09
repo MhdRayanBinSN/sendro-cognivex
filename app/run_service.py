@@ -30,6 +30,7 @@ from app.pipeline.validate import validate_candidate
 from app.services.fetcher import Fetcher
 from app.services.browser import render_public_page
 from app.services.search import configured_search_provider
+from app.services.site_metrics import collect_site_metrics
 from app.services.urlsafe import canonicalize_url, registered_domain
 
 logger = logging.getLogger(__name__)
@@ -542,6 +543,14 @@ async def run_pipeline(run_id: int) -> None:
                           or item["screenshot_errors"] for item in results)
             return {"products": results, "partial": partial, "_stage_failed": partial}
 
+        async def site_metrics_stage(state: dict) -> dict:
+            products = state["screenshot_capture"].get("products", [])
+            candidates = [Candidate.model_validate(item["candidate"]) for item in products]
+            # Public GitHub and PageSpeed enrichments are best-effort. Their
+            # quotas or temporary outages must not block an evidence report.
+            metrics = await collect_site_metrics(candidates)
+            return {"products": metrics, "partial": False}
+
         async def compare_stage(state: dict) -> dict:
             products = state["screenshot_capture"]["products"]
             if len(products) < 2:
@@ -611,6 +620,7 @@ async def run_pipeline(run_id: int) -> None:
             html = render_html(markdown, f"{candidate_a.name} vs {candidate_b.name}",
                                screenshots=screenshots, benchmarks=benchmarks,
                                product_names=(candidate_a.name, candidate_b.name), facts=report_facts,
+                               site_metrics=state.get("site_metrics", {}).get("products", []),
                                scope_label=("Current category alternatives · launch recency unverified"
                                             if scope == "category_alternatives" else "Verified recent launches"),
                                scope_note=scope_note or "")
@@ -627,7 +637,7 @@ async def run_pipeline(run_id: int) -> None:
             state = await execute_stages(run_id,
                 [("discover", discover_stage), ("validate", validate_stage), ("select", select_stage),
                  ("research", research_stage), ("screenshot_capture", screenshot_stage),
-                 ("compare_render", compare_stage)], session)
+                 ("site_metrics", site_metrics_stage), ("compare_render", compare_stage)], session)
             if state.get("compare_render", {}).get("partial"):
                 run = session.get(Run, run_id)
                 run.status = "partial"

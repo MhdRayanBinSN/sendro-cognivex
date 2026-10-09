@@ -178,7 +178,8 @@ const runStages = [
   { id:"select", title:"Choose a comparison pair", description:"Select two new products with enough category overlap." },
   { id:"research", title:"Research evidence", description:"Map product sites, select useful pages, and verify facts." },
   { id:"screenshot_capture", title:"Capture and review screenshots", description:"Render product pages in Chromium and check each image." },
-  { id:"compare_render", title:"Verify and build report", description:"Compare sourced facts and render HTML and Markdown." },
+  { id:"site_metrics", title:"Check SEO and GitHub signals", description:"Collect PageSpeed technical SEO and matched public repository data." },
+  { id:"compare_render", title:"Compare evidence and build report", description:"Compare sourced facts and render HTML and Markdown." },
 ];
 
 function stageTools(stageId, run, decisions) {
@@ -187,7 +188,7 @@ function stageTools(stageId, run, decisions) {
     if (stageId === "select") return call.stage === "pair_selector";
     if (stageId === "research") return ["page_picker", "fact_extractor", "gap_filler"].includes(call.stage);
     if (stageId === "screenshot_capture") return call.stage === "screenshot_judge";
-    if (stageId === "compare_render") return ["comparator", "writer", "verifier", "verifier_recheck"].includes(call.stage);
+    if (stageId === "compare_render") return call.stage === "comparator";
     return false;
   });
   const actualModels = [...new Set(calls.map(call => `${providerName(call.provider)} · ${call.model}`))];
@@ -199,7 +200,13 @@ function stageTools(stageId, run, decisions) {
   if (stageId === "select") return actualModels.length ? actualModels : [strongModel];
   if (stageId === "research") return ["Sitemap + safe HTTP", ...(actualModels.length ? actualModels : [fastModel])];
   if (stageId === "screenshot_capture") return ["Playwright Chromium", ...(actualModels.length ? actualModels : [`${providerName(tools.llm_provider)} vision · ${tools.vision_model || "vision model"}`])];
-  return [...(actualModels.length ? actualModels : [strongModel]), "Evidence verification", "HTML + Markdown renderer"];
+  if (stageId === "site_metrics") {
+    const integrations = [];
+    if (tools.github_search_enabled) integrations.push("GitHub REST API");
+    if (tools.pagespeed_audit_enabled) integrations.push("Google PageSpeed Insights");
+    return integrations.length ? integrations : ["Optional external metrics disabled"];
+  }
+  return [...(actualModels.length ? actualModels : [strongModel]), "Evidence-linked comparison", "HTML + Markdown renderer"];
 }
 
 function renderRunDetails(run) {
@@ -234,9 +241,13 @@ function renderRunDetails(run) {
     const screenshotProducts = stage?.output_json?.products || [];
     const screenshotCount = screenshotProducts.reduce((total, item) => total + Number(item.screenshot_count || 0), 0);
     const screenshotErrors = screenshotProducts.flatMap(item => item.screenshot_errors || []);
+    const metricProducts = stage?.output_json?.products || [];
+    const metricErrors = metricProducts.flatMap(item => item.errors || []);
     const screenshotDetail = definition.id === "screenshot_capture" && stage?.status && stage.status !== "pending"
       ? `${screenshotCount} images captured and reviewed${screenshotErrors.length ? ` · ${screenshotErrors[0]}` : ""}` : null;
-    const detail = stage?.error || screenshotDetail || (definition.id === "validate" && alternativeScope
+    const metricDetail = definition.id === "site_metrics" && stage?.status && stage.status !== "pending"
+      ? `${metricProducts.length} products checked${metricErrors.length ? ` · ${metricErrors[0]}` : ""}` : null;
+    const detail = stage?.error || screenshotDetail || metricDetail || (definition.id === "validate" && alternativeScope
       ? validation?.output_json?.scope_note || discovery?.output_json?.scope_note || "Using current category alternatives; recent launches were not sufficiently verified."
       : selectionFailed && index === selectionIndex
       ? stage?.output_json?.reasoning || "Fewer than two new validated product sites were available."

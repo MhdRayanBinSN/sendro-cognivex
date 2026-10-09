@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     max_page_picker_urls: int = Field(default=24, ge=8, le=60)
     min_screenshots: int = Field(default=3, ge=1, le=20)
     allow_established_alternatives: bool = True
+    github_search_enabled: bool = True
+    github_token: SecretStr | None = None
+    pagespeed_audit_enabled: bool = True
+    pagespeed_api_key: SecretStr | None = None
+    product_hunt_search_enabled: bool = True
+    product_hunt_algolia_app_id: str = "0H4SMABBSG"
+    product_hunt_algolia_search_key: SecretStr = SecretStr("9670d2d619b9d07859448d7628eea5f3")
+    product_hunt_algolia_index: str = "Post_production"
     max_gap_fill_iterations: int = Field(default=1, ge=0, le=10)
     max_run_cost_usd: float = Field(default=5.0, gt=0)
     max_run_minutes: int = Field(default=20, gt=0)

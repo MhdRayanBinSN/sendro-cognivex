@@ -8,7 +8,7 @@ A configurable FastAPI application that discovers recently launched software pro
 - A Gemini API key; optionally add a Groq API key for text-call fallback if Gemini is rate limited
 - Optional admin key if you want to protect run/category write actions
 
-The default LLM setup uses Gemini Flash-Lite for Tavily query generation, candidate extraction, and page picking, and Gemini Flash for selection, comparison, verification, and screenshot review. Hacker News discovery skips query generation because its search feed is narrow. Discovery uses compact date-bounded search results, checks launch quotes against source snippets, resolves official homepages, and expands from 90 to 180 and then 365 days only when fewer than two candidates survive. Blog, help-center, and documentation pages cannot be selected as product homepages. Research and screenshot capture are separate visible run stages; each product must pass three Chromium screenshot checks by default. If `GROQ_API_KEY` is configured, text requests automatically retry with Groq GPT-OSS 120B when Gemini returns HTTP 429. Gemini quotas vary by account and can change; check your current limits in AI Studio. The Groq fallback may incur charges and has its own limits. With `SEARCH_PROVIDER=hacker_news`, discovery is limited to public Show HN posts. Set `SEARCH_PROVIDER=tavily` and a Tavily key for broader web discovery. Product Hunt is not connected.
+The default LLM setup uses Gemini Flash-Lite for query generation, candidate extraction, page picking, and fact extraction, and Gemini Flash for selection, comparison, and screenshot review. Tavily is the broad web search provider; public GitHub repository search adds open-source signals and supplements current-alternative discovery. Google PageSpeed Insights adds mobile Lighthouse technical SEO and performance audits. These are not keyword rankings, backlinks, or traffic estimates. Both enrichments are best-effort and can be disabled; see `.env.example` for optional tokens/keys. Hacker News discovery also uses public Show HN posts. Product Hunt is not connected.
 
 ## Quick start with Docker
 
@@ -115,6 +115,8 @@ Settings can be set in `.env` or the process environment. See [`.env.example`](.
 | `ANTHROPIC_API_KEY` | Claude API credential when `LLM_PROVIDER=anthropic` |
 | `GROQ_FALLBACK_MODEL` | Groq text model used after Gemini rate limits |
 | `GROQ_JSON_FALLBACK_MODEL` | Smaller Groq model retried after a Groq structured-output rejection |
+| `GITHUB_SEARCH_ENABLED`, `GITHUB_TOKEN` | Enable public GitHub repository search; token is optional and raises authenticated API limits |
+| `PAGESPEED_AUDIT_ENABLED`, `PAGESPEED_API_KEY` | Enable Google's mobile PageSpeed/Lighthouse SEO and performance audit; API key is optional but recommended for repeated automated use |
 | `LLM_MODEL_FAST` | Gemini Flash-Lite model for bulk extraction and query generation |
 | `LLM_MODEL_STRONG` | Gemini Flash model for selection and verification |
 | `LLM_MODEL_VISION` | Vision model for screenshot review |
@@ -125,6 +127,14 @@ Settings can be set in `.env` or the process environment. See [`.env.example`](.
 | `SITEMAP_FALLBACK_PATHS` | Comma-separated protocol sitemap fallback paths |
 | `MAX_PAGES_PER_PRODUCT`, `MAX_FACT_CHARS_PER_PAGE`, `MIN_SCREENSHOTS` | Per-product research limits and maximum page text sent to each fact-extraction call (18,000 characters by default) |
 | `MAX_RUN_COST_USD`, `MAX_RUN_MINUTES` | Per-run safety limits |
+
+### GitHub and PageSpeed setup
+
+GitHub search works without credentials, but unauthenticated search has a low shared rate limit. For recurring runs, create a fine-grained GitHub token limited to public repository read access and set `GITHUB_TOKEN` in `.env`. The token is sent only to `api.github.com` and is never included in run output.
+
+PageSpeed Insights can be called without a key, but automated use should have a Google Cloud API key with the PageSpeed Insights API enabled and quota available. Put it in `PAGESPEED_API_KEY`. Set either `GITHUB_SEARCH_ENABLED=false` or `PAGESPEED_AUDIT_ENABLED=false` to skip that provider. Provider quota errors are shown in each report and do not fail the research pipeline.
+
+These integrations add public repository metadata and mobile technical SEO/Lighthouse checks. They do not provide keyword-position, backlink, or search-traffic data.
 | `SCHEDULE_CRON` | Daily worker schedule, interpreted in UTC |
 
 The example config selects Gemini Flash-Lite for bulk text work and Gemini Flash for stronger text and vision tasks. Both model IDs are configurable in `.env`; Gemini model availability and quotas depend on your AI Studio account. Groq GPT-OSS is the optional text fallback; it does not review screenshots. If Gemini is rate limited during screenshot judging, deterministic image-integrity checks keep the capture stage moving and the run records that fallback. See Google's [Gemini model list](https://ai.google.dev/gemini-api/docs/models) and Groq's [model list and pricing](https://console.groq.com/docs/models).
